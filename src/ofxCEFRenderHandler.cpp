@@ -5,8 +5,9 @@
 #include "ofApp.h"
 #include "ofAppGLFWWindow.h"
 
+#if defined(TARGET_OSX)
 #import <Cocoa/Cocoa.h>
-
+#endif
 
 //--------------------------------------------------------------
 //--------------------------------------------------------------
@@ -37,7 +38,7 @@ DCHECK(_gl_error == GL_NO_ERROR) << \
 
 //--------------------------------------------------------------
 //--------------------------------------------------------------
-
+#if defined(TARGET_OSX)
 static CefRect convertRect(const NSRect& target, const NSRect& frame) {
     NSRect rect = target;
     rect.origin.y = NSMaxY(frame) - NSMaxY(target);
@@ -46,26 +47,27 @@ static CefRect convertRect(const NSRect& target, const NSRect& frame) {
                    rect.size.width,
                    rect.size.height);
 }
-
+#endif
 
 //--------------------------------------------------------------
 ofxCEFRenderHandler::ofxCEFRenderHandler(){
-  transparent_ = true;
-  initialized = false;
-  
+    transparent_ = true;
+    initialized = false;
+    bIsShuttingDown = false;
+	bIsRetinaDisplay = false;
     /*
-    //http://stackoverflow.com/questions/11067066/mac-os-x-best-way-to-do-runtime-check-for-retina-display
-    float displayScale = 1;
-    if ([[NSScreen mainScreen] respondsToSelector:@selector(backingScaleFactor)]) {
-        NSArray *screens = [NSScreen screens];
-        for (int i = 0; i < [screens count]; i++) {
-            float s = [[screens objectAtIndex:i] backingScaleFactor];
-            if (s > displayScale)
-                displayScale = s;
-        }
-    }
+     //http://stackoverflow.com/questions/11067066/mac-os-x-best-way-to-do-runtime-check-for-retina-display
+     float displayScale = 1;
+     if ([[NSScreen mainScreen] respondsToSelector:@selector(backingScaleFactor)]) {
+     NSArray *screens = [NSScreen screens];
+     for (int i = 0; i < [screens count]; i++) {
+     float s = [[screens objectAtIndex:i] backingScaleFactor];
+     if (s > displayScale)
+     displayScale = s;
+     }
+     }
      */
-    
+#if defined(TARGET_OSX)    
     float displayScale = [[NSScreen mainScreen] backingScaleFactor];
     
     if (displayScale > 1.0){
@@ -73,9 +75,9 @@ ofxCEFRenderHandler::ofxCEFRenderHandler(){
     } else {
         bIsRetinaDisplay = false;
     }
-    
+#endif    
     texture_id_ = 0;
-
+    
     show_update_rect_ = true;
 }
 
@@ -97,7 +99,7 @@ void ofxCEFRenderHandler::init(void){
     
     // Create the texture.
     glGenTextures(1, &texture_id_); VERIFY_NO_ERROR;
-    DCHECK_NE(texture_id_, 0U); VERIFY_NO_ERROR;
+//    DCHECK_NE(texture_id_, 0U); VERIFY_NO_ERROR;
     
     glBindTexture(GL_TEXTURE_2D, texture_id_); VERIFY_NO_ERROR;
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
@@ -109,14 +111,14 @@ void ofxCEFRenderHandler::init(void){
 
 //--------------------------------------------------------------
 void ofxCEFRenderHandler::reshape(int w_, int h_){
-  w = w_;
-  h = h_;
- 
+    w = w_;
+    h = h_;
+    
 }
 
 //--------------------------------------------------------------
 void ofxCEFRenderHandler::OnPopupShow(CefRefPtr<CefBrowser> browser,
-                                   bool show) {
+                                      bool show) {
     if (!show) {
         // Clear the popup rectangle.
         ClearPopupRects();
@@ -125,7 +127,7 @@ void ofxCEFRenderHandler::OnPopupShow(CefRefPtr<CefBrowser> browser,
 
 //--------------------------------------------------------------
 void ofxCEFRenderHandler::OnPopupSize(CefRefPtr<CefBrowser> browser,
-                                   const CefRect& rect) {
+                                      const CefRect& rect) {
     if (rect.width <= 0 || rect.height <= 0)
         return;
     original_popup_rect_ = rect;
@@ -161,8 +163,12 @@ void ofxCEFRenderHandler::ClearPopupRects() {
 
 //--------------------------------------------------------------
 bool ofxCEFRenderHandler::GetScreenInfo(CefRefPtr<CefBrowser> browser,
-                   CefScreenInfo& screen_info) {
+                                        CefScreenInfo& screen_info) {
+    
+    
+    if (bIsShuttingDown) return false;
 
+#if defined(TARGET_OSX)    
     NSWindow* mainWnd =  (NSWindow *) ((ofAppGLFWWindow *) ofGetWindowPtr())->getCocoaWindow();
     
     NSWindow* window = mainWnd;// [view_ window];
@@ -187,21 +193,23 @@ bool ofxCEFRenderHandler::GetScreenInfo(CefRefPtr<CefBrowser> browser,
     screen_info.rect = convertRect([screen frame], [screen frame]);
     screen_info.available_rect =
     convertRect([screen visibleFrame], [screen frame]);
-    
+#endif    
     
     return true;
 }
 
 //--------------------------------------------------------------
-bool ofxCEFRenderHandler::GetViewRect(CefRefPtr<CefBrowser> browser, CefRect &rect)
-{
+bool ofxCEFRenderHandler::GetViewRect(CefRefPtr<CefBrowser> browser, CefRect &rect){
+    
+    if (bIsShuttingDown) return false;
+    
     if (bIsRetinaDisplay){
         rect = CefRect(0,0, ofGetWidth()*0.5, ofGetHeight()*0.5);
     } else {
         rect = CefRect(0,0, ofGetWidth(), ofGetHeight());
     }
-
-  return true;
+    
+    return true;
 }
 
 //--------------------------------------------------------------
@@ -212,7 +220,7 @@ void ofxCEFRenderHandler::render() {
     if (w == 0 || h == 0)
         return;
     
-    DCHECK(initialized);
+ //   DCHECK(initialized);
     
     struct {
         float tu, tv;
@@ -247,13 +255,13 @@ void ofxCEFRenderHandler::render() {
     glEnd(); VERIFY_NO_ERROR;
     glPopAttrib(); VERIFY_NO_ERROR;
     
-//    // Rotate the view based on the mouse spin.
-//    if (spin_x_ != 0) {
-//        glRotatef(-spin_x_, 1.0f, 0.0f, 0.0f); VERIFY_NO_ERROR;
-//    }
-//    if (spin_y_ != 0) {
-//        glRotatef(-spin_y_, 0.0f, 1.0f, 0.0f); VERIFY_NO_ERROR;
-//    }
+    //    // Rotate the view based on the mouse spin.
+    //    if (spin_x_ != 0) {
+    //        glRotatef(-spin_x_, 1.0f, 0.0f, 0.0f); VERIFY_NO_ERROR;
+    //    }
+    //    if (spin_y_ != 0) {
+    //        glRotatef(-spin_y_, 0.0f, 1.0f, 0.0f); VERIFY_NO_ERROR;
+    //    }
     
     if (transparent_) {
         // Alpha blending style. Texture values have premultiplied alpha.
@@ -267,7 +275,7 @@ void ofxCEFRenderHandler::render() {
     glEnable(GL_TEXTURE_2D); VERIFY_NO_ERROR;
     
     // Draw the facets with the texture.
-    DCHECK_NE(texture_id_, 0U); VERIFY_NO_ERROR;
+//    DCHECK_NE(texture_id_, 0U); VERIFY_NO_ERROR;
     glBindTexture(GL_TEXTURE_2D, texture_id_); VERIFY_NO_ERROR;
     glInterleavedArrays(GL_T2F_V3F, 0, vertices); VERIFY_NO_ERROR;
     glDrawArrays(GL_QUADS, 0, 4); VERIFY_NO_ERROR;
@@ -322,12 +330,12 @@ void ofxCEFRenderHandler::render() {
 
 //--------------------------------------------------------------
 void ofxCEFRenderHandler::OnPaint(CefRefPtr<CefBrowser> browser,
-                            PaintElementType type,
-                            const RectList &dirtyRects,
-                            const void* buffer,
-                            int width,
-                            int height){
-
+                                  PaintElementType type,
+                                  const RectList &dirtyRects,
+                                  const void* buffer,
+                                  int width,
+                                  int height){
+    
     if (!initialized)
         init();
     
@@ -342,7 +350,7 @@ void ofxCEFRenderHandler::OnPaint(CefRefPtr<CefBrowser> browser,
     // Enable 2D textures.
     glEnable(GL_TEXTURE_2D); VERIFY_NO_ERROR;
     
-    DCHECK_NE(texture_id_, 0U);
+//    DCHECK_NE(texture_id_, 0U);
     glBindTexture(GL_TEXTURE_2D, texture_id_); VERIFY_NO_ERROR;
     
     if (type == PET_VIEW) {

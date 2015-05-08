@@ -1,11 +1,15 @@
 #include "ofxCEF.h"
 #include "ofMain.h"
 #include "ofAppGLFWWindow.h"
+#if defined(TARGET_OSX)
 #include <Cocoa/Cocoa.h>
+#endif
 #include "ofxCEFClientApp.h"
+
 
 //--------------------------------------------------------------
 //--------------------------------------------------------------
+#if defined(TARGET_OSX)
 @interface NSNotificationManager: NSObject
 {
     ofxCEF *observer;
@@ -39,70 +43,104 @@
 }
 
 @end
+#endif
 
 //--------------------------------------------------------------
 //--------------------------------------------------------------
-ofxCEF* initofxCEF(int argc, char** argv)
-{
-    CefMainArgs args(argc, argv);
-    //CefExecuteProcess(args, 0, NULL);
+#if defined(TARGET_WIN32)
+HINSTANCE hInst;   // current instance
+#endif
 
-    CefSettings settings;
-    settings.background_color = 0xFFFF00FF;
-    //settings.single_process = true;
-    settings.windowless_rendering_enabled = true;
+ofxCEF* initofxCEF(int argc, char** argv){
+#if defined(TARGET_OSX) 
+	CefMainArgs main_args(argc, argv);
+#elif defined(TARGET_WIN32)
+	CefMainArgs main_args(::GetModuleHandle(NULL));
+#endif
 
-    CefRefPtr<ofxCEFClientApp> app(new ofxCEFClientApp);
+	CefRefPtr<ofxCEFClientApp> app(new ofxCEFClientApp);
 
-    CefInitialize(args, settings, app.get(), NULL);
+	int exit_code = CefExecuteProcess(main_args, app.get(), NULL);
+	if (exit_code >= 0) {
+		//return exit_code;
+	}
 
-    return new ofxCEF();
+	CefSettings settings;
+	settings.background_color = 0xFFFF00FF;
+	settings.single_process = false; 
+	settings.windowless_rendering_enabled = true;
+	settings.command_line_args_disabled = true;
+	//settings.multi_threaded_message_loop = true;
+
+	CefInitialize(main_args, settings, app.get(), NULL);
+
+	return new ofxCEF();
 }
 
 //--------------------------------------------------------------
-ofxCEF::ofxCEF()
-{
+//--------------------------------------------------------------
+void ofxCEF::setup(){
     
-    CefWindowInfo windowInfo;
-    CefBrowserSettings settings;
-    settings.web_security = STATE_DISABLED;
-    settings.webgl = STATE_ENABLED;
+	CefWindowInfo windowInfo;
+	renderHandler = new ofxCEFRenderHandler();
 
-    NSWindow * cocoaWindow =  (NSWindow *) ((ofAppGLFWWindow *) ofGetWindowPtr())->getCocoaWindow();
+#if defined(TARGET_OSX) 
+	NSWindow * cocoaWindow =  (NSWindow *) ((ofAppGLFWWindow *) ofGetWindowPtr())->getCocoaWindow();
+    [cocoaWindow setReleasedWhenClosed:NO];
+    
     NSView * view =  [ cocoaWindow contentView];
-
     windowInfo.SetAsWindowless(view, true);
-    windowInfo.transparent_painting_enabled = STATE_ENABLED;
-    //windowInfo.SetAsChild(view, 0, 0, 1000, 1000);
 
-    renderHandler = new ofxCEFRenderHandler();
-    
-    if (renderHandler->bIsRetinaDisplay) {
+	if (renderHandler->bIsRetinaDisplay) {
         ofSetWindowPosition(0, 0);
         ofSetWindowShape(ofGetWidth(), ofGetHeight());
     }
 
-    client = new ofxCEFBrowserClient(this, renderHandler);
-    browser = CefBrowserHost::CreateBrowserSync(windowInfo, client.get(), "", settings, 0);
-    
-    if (renderHandler->bIsRetinaDisplay) {
+#elif defined(TARGET_WIN32)
+	HWND hWnd = ofGetWin32Window();
+	windowInfo.SetAsWindowless(hWnd, true);
+#endif
+
+	windowInfo.transparent_painting_enabled = STATE_ENABLED;
+
+	CefBrowserSettings settings;
+    settings.web_security = STATE_DISABLED;
+	settings.webgl = STATE_ENABLED;
+	settings.windowless_frame_rate = 60;
+
+	client = new ofxCEFBrowserClient(this, renderHandler);
+    browser = CefBrowserHost::CreateBrowserSync(windowInfo, client.get(), "", settings, NULL);
+  
+#if defined(TARGET_OSX) 
+	if (renderHandler->bIsRetinaDisplay) {
         reshape(ofGetWidth()*2, ofGetHeight()*2);
     }
+#endif
     
-    enableEvents();
-    
-    // Listener to get a notification when the app window switches screen
-    //NSNotificationManager *nsNotificationManager = [[NSNotificationManager alloc] initWithObserver:this method:&ofxCEF::notificationHandler];
+    enableEvents();    
 }
 
 //--------------------------------------------------------------
-ofxCEF::~ofxCEF()
-{
+ofxCEF::ofxCEF(){
 }
 
 //--------------------------------------------------------------
-void ofxCEF::enableEvents()
-{
+ofxCEF::~ofxCEF(){
+}
+
+void ofxCEF::exit() {
+	//TODO Check if we need to do some calls to OnBeforeClose 
+	disableEvents();
+	renderHandler->bIsShuttingDown = true;
+    browser->GetHost()->CloseBrowser(false);
+    
+    // The following call to CefShutdown make the app crash on OS X. Still not working on Windows neither.
+	//CefShutdown();
+}
+
+
+//--------------------------------------------------------------
+void ofxCEF::enableEvents(){
     ofAddListener(ofEvents().mousePressed, this, &ofxCEF::mousePressed);
     ofAddListener(ofEvents().mouseMoved, this, &ofxCEF::mouseMoved);
     ofAddListener(ofEvents().mouseDragged, this, &ofxCEF::mouseDragged);
@@ -115,8 +153,7 @@ void ofxCEF::enableEvents()
 }
 
 //--------------------------------------------------------------
-void ofxCEF::disableEvents()
-{
+void ofxCEF::disableEvents(){
     ofRemoveListener(ofEvents().mousePressed, this, &ofxCEF::mousePressed);
     ofRemoveListener(ofEvents().mouseMoved, this, &ofxCEF::mouseMoved);
     ofRemoveListener(ofEvents().mouseDragged, this, &ofxCEF::mouseDragged);
@@ -129,8 +166,7 @@ void ofxCEF::disableEvents()
 }
 
 //--------------------------------------------------------------
-void ofxCEF::load(const char* url)
-{
+void ofxCEF::load(const char* url){
     if (!renderHandler->initialized) {
         renderHandler->init();
     }
@@ -139,8 +175,7 @@ void ofxCEF::load(const char* url)
 }
 
 //--------------------------------------------------------------
-void ofxCEF::update()
-{
+void ofxCEF::update(){
     GLint swapbytes, lsbfirst, rowlength, skiprows, skippixels, alignment;
     /* Save current pixel store state. */
     
@@ -164,8 +199,7 @@ void ofxCEF::update()
 }
 
 //--------------------------------------------------------------
-void ofxCEF::draw(void)
-{
+void ofxCEF::draw(void){
     
 //    cout << "ofxCEF::draw "<< endl;
 //    CefDoMessageLoopWork();
@@ -203,8 +237,7 @@ void ofxCEF::draw(void)
 }
 
 //--------------------------------------------------------------
-void ofxCEF::onLoadStart()
-{
+void ofxCEF::onLoadStart(){
     ofxCEFEventArgs evt;
     evt.type = ofxCEFEventArgs::onLoadStart;
     evt.httpStatusCode = -1;
@@ -213,8 +246,7 @@ void ofxCEF::onLoadStart()
 }
 
 //--------------------------------------------------------------
-void ofxCEF::onLoadEnd(int httpStatusCode)
-{
+void ofxCEF::onLoadEnd(int httpStatusCode){
     ofxCEFEventArgs evt;
     evt.type = ofxCEFEventArgs::onLoadEnd;
     evt.httpStatusCode = httpStatusCode;
@@ -223,8 +255,7 @@ void ofxCEF::onLoadEnd(int httpStatusCode)
 }
 
 //--------------------------------------------------------------
-void ofxCEF::gotMessageFromJS(string name, string type, string value)
-{
+void ofxCEF::gotMessageFromJS(string name, string type, string value){
     ofxCEFMessageArgs msg;
     msg.type = type;
     msg.name = name;
@@ -234,9 +265,10 @@ void ofxCEF::gotMessageFromJS(string name, string type, string value)
 }
 
 //--------------------------------------------------------------
-void ofxCEF::notificationHandler()
-{
-    float displayScale = [[NSScreen mainScreen] backingScaleFactor];
+void ofxCEF::notificationHandler(){
+
+#if defined(TARGET_OSX) 
+	float displayScale = [[NSScreen mainScreen] backingScaleFactor];
     
     cout << " ======= ofxCEF::notificationHandler =========" << endl;
     cout << "OF window size: " << ofGetWidth() << " - " << ofGetHeight() << endl;
@@ -265,6 +297,9 @@ void ofxCEF::notificationHandler()
 //            reshape(ofGetWidth(), ofGetHeight());
 //        }
 //    }
+#elif defined(TARGET_WIN32)
+	
+#endif
 
     reshape(ofGetWidth(), ofGetHeight());
     renderHandler->init();
@@ -272,16 +307,14 @@ void ofxCEF::notificationHandler()
 }
 
 //--------------------------------------------------------------
-void ofxCEF::reshape(int w, int h)
-{
+void ofxCEF::reshape(int w, int h){
     cout << "Reshape: " << w << " - " << h << endl;
     renderHandler->reshape(w, h);
     browser->GetHost()->WasResized();
 }
 
 //--------------------------------------------------------------
-void ofxCEF::mousePressed(ofMouseEventArgs &e)
-{
+void ofxCEF::mousePressed(ofMouseEventArgs &e){
     int x = e.x;
     int y = e.y;
     
@@ -302,8 +335,7 @@ void ofxCEF::mousePressed(ofMouseEventArgs &e)
 }
 
 //--------------------------------------------------------------
-void ofxCEF::mouseReleased(ofMouseEventArgs &e)
-{
+void ofxCEF::mouseReleased(ofMouseEventArgs &e){
     int x = e.x;
     int y = e.y;
     
@@ -323,8 +355,7 @@ void ofxCEF::mouseReleased(ofMouseEventArgs &e)
 }
 
 //--------------------------------------------------------------
-void ofxCEF::mouseMoved(ofMouseEventArgs &e)
-{
+void ofxCEF::mouseMoved(ofMouseEventArgs &e){
     int x = e.x;
     int y = e.y;
     
@@ -345,14 +376,12 @@ void ofxCEF::mouseMoved(ofMouseEventArgs &e)
 }
 
 //--------------------------------------------------------------
-void ofxCEF::mouseDragged(ofMouseEventArgs &e)
-{
+void ofxCEF::mouseDragged(ofMouseEventArgs &e){
     mouseMoved(e);
 }
 
 //--------------------------------------------------------------
-void ofxCEF::mouseWheel(int x, int y)
-{
+void ofxCEF::mouseWheel(int x, int y){
     CefMouseEvent mouse_event;
     mouse_event.x = mouse_event.y = 1;
     mouse_event.modifiers = 0;
@@ -361,8 +390,7 @@ void ofxCEF::mouseWheel(int x, int y)
 }
 
 //--------------------------------------------------------------
-void ofxCEF::keyPressed(ofKeyEventArgs &e)
-{
+void ofxCEF::keyPressed(ofKeyEventArgs &e){
     //cout << "KEY:: " << e.key << " - KEYCODE:: " <<  e.keycode << " - SCANCODE::" << e.scancode << endl;
     
     CefKeyEvent event;
@@ -370,11 +398,13 @@ void ofxCEF::keyPressed(ofKeyEventArgs &e)
     if (e.key == OF_KEY_LEFT || e.key == OF_KEY_UP
         || e.key == OF_KEY_RIGHT || e.key == OF_KEY_DOWN
         || e.key == OF_KEY_BACKSPACE || e.key == OF_KEY_DEL) {
-        
+
+		event.windows_key_code = e.key;
         event.native_key_code = e.scancode;
         event.type = KEYEVENT_KEYDOWN;
         
     } else {
+		event.windows_key_code = e.key;
         event.native_key_code = e.scancode;
         event.character = (char)e.key;
         event.type = KEYEVENT_CHAR;
@@ -385,8 +415,7 @@ void ofxCEF::keyPressed(ofKeyEventArgs &e)
 }
 
 //--------------------------------------------------------------
-void ofxCEF::keyReleased(ofKeyEventArgs &e)
-{
+void ofxCEF::keyReleased(ofKeyEventArgs &e){
     CefKeyEvent event;
     
     if (e.key == OF_KEY_LEFT || e.key == OF_KEY_UP
@@ -394,12 +423,14 @@ void ofxCEF::keyReleased(ofKeyEventArgs &e)
         || e.key == OF_KEY_BACKSPACE || e.key == OF_KEY_DEL) {
         
         // Hack - Need to do this otherwise we loose an event.
+		event.windows_key_code = e.key;
         event.native_key_code = e.scancode;
         event.character = (char)e.key;
         event.type = KEYEVENT_CHAR;
         browser->GetHost()->SendKeyEvent(event);
         
     } else {
+		event.windows_key_code = e.key;
         event.native_key_code = e.scancode;
         event.type = KEYEVENT_KEYUP;
         browser->GetHost()->SendKeyEvent(event);
@@ -407,8 +438,7 @@ void ofxCEF::keyReleased(ofKeyEventArgs &e)
 }
 
 //--------------------------------------------------------------
-void ofxCEF::windowResized(ofResizeEventArgs &e)
-{
+void ofxCEF::windowResized(ofResizeEventArgs &e){
     reshape(e.width, e.height);
     renderHandler->init();
     //cefgui->browser->Reload();
@@ -416,8 +446,7 @@ void ofxCEF::windowResized(ofResizeEventArgs &e)
 
 
 //--------------------------------------------------------------
-void ofxCEF::executeJS(const char* command)
-{
+void ofxCEF::executeJS(const char* command){
     CefRefPtr<CefFrame> frame = browser->GetMainFrame();
     frame->ExecuteJavaScript(command, frame->GetURL(), 0);
 

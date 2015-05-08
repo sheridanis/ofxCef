@@ -36,11 +36,15 @@ public:
     ofxCEF();
     ~ofxCEF();
     
+	void exit();
+
     void load(const char*);
     void update();
     void draw(void);
     void reshape(int, int);
-
+    
+    void setup();
+    
     void mouseWheel(int, int);
     
     void mousePressed(ofMouseEventArgs &e);
